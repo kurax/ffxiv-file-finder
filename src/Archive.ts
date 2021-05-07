@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { EOL } from 'os';
 import path from 'path';
+import { inflateRawSync } from 'zlib';
 
 import createReader, { Reader } from './reader';
 import { hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
@@ -113,7 +114,19 @@ export default abstract class Archive {
         return result;
     }
 
-    private async readDataEntry(reader: Reader) {
+    private async decompressDataEntry(reader: Reader): Promise<Buffer> {
+        // Header size
+        await reader.readInt32();
+        // Null
+        await reader.readInt32();
+        // Compressed length
+        const compressedLength = await reader.readInt32();
+        // Decompressed length
+        await reader.readInt32();
+        return inflateRawSync(await reader.read(compressedLength));
+    }
+
+    private async readDataEntry(reader: Reader, startPos: number) {
         // Header length
         const headerLength = await reader.readInt32();
         // Content type
@@ -127,33 +140,46 @@ export default abstract class Archive {
         // Num blocks
         const numBlocks = await reader.readInt32();
 
-        console.log(headerLength, contentType, uncompressedSize, unknown, blockBufferSize, numBlocks);
+        // console.log(startPos);
+        // console.log(headerLength, contentType, uncompressedSize, unknown, blockBufferSize, numBlocks);
 
         switch (contentType) {
-            case 4:
+            case 4: // Texture
+                const frames: Array<[number, number, number, number, number, number]> = [];
                 for (let i = 0; i < numBlocks; i++) {
-                    // Frame offset
                     const frameOffset = await reader.readInt32();
-                    // Frame size
                     const frameSize = await reader.readInt32();
-                    // Unknown
-                    const unknown = await reader.readInt32();
-                    // Frame blocksize offset
+                    const frameUncompressedSize = await reader.readInt32();
                     const frameBlocksizeOffset = await reader.readInt32();
-                    // Frame blocksize count
                     const frameBlocksizeCount = await reader.readInt32();
-                    // Frame blocksize
                     const frameBlocksize = await reader.readInt16();
-                    console.log(
+                    frames.push([
                         frameOffset,
                         frameSize,
-                        unknown,
+                        frameUncompressedSize,
                         frameBlocksizeOffset,
                         frameBlocksizeCount,
                         frameBlocksize
-                    );
+                    ]);
+                    // console.log(
+                    //     frameOffset,
+                    //     frameSize,
+                    //     frameUncompressedSize,
+                    //     frameBlocksizeOffset,
+                    //     frameBlocksizeCount,
+                    //     frameBlocksize
+                    // );
                 }
-                break;
+                reader.seek(startPos + headerLength);
+                let textureData: Buffer | undefined;
+                for (const frame of frames) {
+                    const headerData = await reader.read(frame[0]);
+                    textureData =
+                        textureData == null
+                            ? Buffer.concat([headerData, await this.decompressDataEntry(reader)])
+                            : Buffer.concat([textureData, headerData, await this.decompressDataEntry(reader)]);
+                }
+                return textureData;
         }
     }
 
@@ -255,6 +281,7 @@ export default abstract class Archive {
                 console.log(`"${file}" is not found`);
                 continue;
             }
+            // TODO: Figure out which dat file to use
             const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat0`;
             if (!fs.existsSync(datFile)) {
                 console.log(`"${datFile}" does not exist`);
@@ -262,7 +289,16 @@ export default abstract class Archive {
             }
             const reader = createReader(datFile);
             reader.seek(location[1]);
-            await this.readDataEntry(reader);
+            const data = await this.readDataEntry(reader, location[1]);
+            if (data == null) {
+                console.log(`Can not extract "${datFile}"`);
+                continue;
+            }
+            const outputFile = path.normalize(path.join(extractDir, file));
+            const outputDir = path.dirname(outputFile);
+            if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+            fs.writeFileSync(outputFile, data);
+            console.log(outputFile);
         }
     }
 }
