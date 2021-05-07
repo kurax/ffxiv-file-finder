@@ -1,0 +1,17 @@
+{
+    "name": "ffxiv-file-finder",
+    "version": "0.1.0",
+    "main": "src/index.ts",
+    "license": "MIT",
+    "private": true,
+    "devDependencies": {
+        "@types/node": "^15.0.2",
+        "ts-node": "^9.1.1",
+        "typescript": "^4.2.4"
+    },
+    "dependencies": {
+        "binary-reader": "^0.1.2",
+        "brute-force-generator": "^1.0.1",
+        "crc-32": "^1.2.0"
+    }
+}
