@@ -1,4 +1,5 @@
 extract/
 node_modules/
+*.db-journal
 *.env
 *.log
