@@ -99,6 +99,18 @@ export default class ArchiveUI extends Archive {
         for (const filename of filenames) {
             yield filename;
             yield filename.split('.').slice(0, -1).concat('uld').join('.');
+
+            let paths = filename.split('/');
+            paths.splice(paths.length - 1, 0, 'light');
+            const filename1 = paths.join('/');
+            yield filename1;
+            yield filename1.split('.').slice(0, -1).concat('uld').join('.');
+
+            paths = filename.split('/');
+            paths.splice(paths.length - 1, 0, 'third');
+            const filename2 = paths.join('/');
+            yield filename2;
+            yield filename2.split('.').slice(0, -1).concat('uld').join('.');
         }
     }
 }

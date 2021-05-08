@@ -7,7 +7,6 @@ dotenv.config();
 const sqpackDir = process.env.SQPACK_DIR;
 const archive = new ArchiveUI(sqpackDir);
 (async () => {
-    // archive.bruteForce(archive.extractTexFromUld());
-    // await archive.extractRaw('ui/icon/000000/000000.tex');
-    // archive.generateSql();
+    await archive.bruteForce(archive.extractTexFromUld());
+    archive.generateSql();
 })();
