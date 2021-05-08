@@ -12,7 +12,7 @@ export interface Reader {
     readSha1: () => Promise<string>;
 }
 
-export default function createReader(file: string): Reader {
+export function createReader(file: string): Reader {
     const reader = BinaryReader.open(file);
     const readNumber = (size: number, method: string) =>
         promisify((callback: (err: Error | null, result?: number) => void) =>
@@ -37,4 +37,56 @@ export default function createReader(file: string): Reader {
         readInt32: readNumber(4, 'readUInt32LE'),
         readInt64: readNumber(8, 'readBigUInt64LE')
     };
+}
+
+export function createMemoryReader(buffer: Buffer): Reader {
+    class MemoryReader implements Reader {
+        private offset: number;
+
+        private readNumber(size: number, method: string) {
+            const result = this.buffer[method](this.offset, size);
+            this.offset += size;
+            return result;
+        }
+
+        constructor(readonly buffer: Buffer) {
+            this.offset = 0;
+        }
+
+        current() {
+            return this.offset;
+        }
+
+        async read(size: number) {
+            const result = this.buffer.subarray(this.offset, this.offset + size);
+            this.offset += result.length;
+            return result;
+        }
+
+        async seek(position: number) {
+            this.offset = position;
+        }
+
+        async readSha1() {
+            return (await this.read(20)).toString('hex');
+        }
+
+        async readInt() {
+            return this.readNumber(6, 'readUIntLE');
+        }
+
+        async readInt16() {
+            return this.readNumber(2, 'readUInt16LE');
+        }
+
+        async readInt32() {
+            return this.readNumber(4, 'readUInt32LE');
+        }
+
+        async readInt64() {
+            return this.readNumber(8, 'readBigUInt64LE');
+        }
+    }
+
+    return new MemoryReader(buffer);
 }

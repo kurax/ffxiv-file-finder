@@ -3,7 +3,7 @@ import { EOL } from 'os';
 import path from 'path';
 import { inflateRawSync } from 'zlib';
 
-import createReader, { Reader } from './reader';
+import { createReader, Reader } from './reader';
 import { hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
 
 const dataDir = path.join(__dirname, '..', 'data');
@@ -20,19 +20,19 @@ export default abstract class Archive {
         this.indexType = basename.split('.')[0];
     }
 
-    private getBruteForceDataFile() {
+    protected getBruteForceDataFile() {
         return this.baseFileName + '.json';
     }
 
-    private getBruteForceResultFile() {
+    protected getBruteForceResultFile() {
         return this.baseFileName + '.txt';
     }
 
-    private getSqlFile() {
+    protected getSqlFile() {
         return this.baseFileName + '.sql';
     }
 
-    private async readIndexFile() {
+    protected async readIndexFile() {
         const reader = createReader(this.indexFile);
         // SqPack header
         // Signature
@@ -114,7 +114,7 @@ export default abstract class Archive {
         return result;
     }
 
-    private async decompressDataEntry(reader: Reader): Promise<Buffer> {
+    protected async decompressDataEntry(reader: Reader): Promise<Buffer> {
         // Header size
         await reader.readInt32();
         // Null
@@ -123,10 +123,12 @@ export default abstract class Archive {
         const compressedLength = await reader.readInt32();
         // Decompressed length
         await reader.readInt32();
-        return inflateRawSync(await reader.read(compressedLength));
+
+        const data = await reader.read(compressedLength);
+        return compressedLength === 32000 ? data : inflateRawSync(data);
     }
 
-    private async readDataEntry(reader: Reader, startPos: number) {
+    protected async readDataEntry(reader: Reader, startPos: number) {
         // Header length
         const headerLength = await reader.readInt32();
         // Content type
@@ -144,6 +146,40 @@ export default abstract class Archive {
         // console.log(headerLength, contentType, uncompressedSize, unknown, blockBufferSize, numBlocks);
 
         switch (contentType) {
+            case 1: // Placeholder
+                reader.seek(startPos + headerLength);
+                break;
+            case 2: // Binary
+                const blocks: Array<[number, number, number]> = [];
+                for (let i = 0; i < numBlocks; i++) {
+                    const offset = await reader.readInt32();
+                    const blockSize = await reader.readInt16();
+                    const decompressedDataSize = await reader.readInt16();
+                    blocks.push([offset, blockSize, decompressedDataSize]);
+                    // console.log(offset, blockSize, decompressedDataSize);
+                }
+                let binaryData: Buffer | undefined;
+                for (const block of blocks) {
+                    reader.seek(startPos + headerLength + block[0]);
+                    binaryData =
+                        binaryData == null
+                            ? await this.decompressDataEntry(reader)
+                            : Buffer.concat([binaryData, await this.decompressDataEntry(reader)]);
+                }
+                return binaryData;
+            case 3: // Model
+                for (let i = 0; i < numBlocks; i++) {
+                    const unknown = await reader.readInt32();
+                    const frameUncompressedChunk = await reader.read(44);
+                    const frameSizeChunk = await reader.read(44);
+                    const frameOffsetChunk = await reader.read(44);
+                    const blockSizeIndexes = await reader.readInt16();
+                    for (let j = 0; j < numBlocks; j++) {
+                        const blockSizeTable = await reader.readInt16();
+                    }
+                }
+                reader.seek(startPos + headerLength);
+                break;
             case 4: // Texture
                 const frames: Array<[number, number, number, number, number, number]> = [];
                 for (let i = 0; i < numBlocks; i++) {
@@ -161,14 +197,7 @@ export default abstract class Archive {
                         frameBlocksizeCount,
                         frameBlocksize
                     ]);
-                    // console.log(
-                    //     frameOffset,
-                    //     frameSize,
-                    //     frameUncompressedSize,
-                    //     frameBlocksizeOffset,
-                    //     frameBlocksizeCount,
-                    //     frameBlocksize
-                    // );
+                    // console.log(frameOffset, frameSize, frameUncompressedSize, frameBlocksizeOffset, frameBlocksizeCount, frameBlocksize);
                 }
                 reader.seek(startPos + headerLength);
                 let textureData: Buffer | undefined;
@@ -183,14 +212,51 @@ export default abstract class Archive {
         }
     }
 
-    private async loadIndexData(): Promise<Record<string, Record<string, any>>> {
+    protected async loadIndexData(): Promise<Record<string, Record<string, any>>> {
         const dataFile = this.getBruteForceDataFile();
         return fs.existsSync(dataFile) ? JSON.parse(fs.readFileSync(dataFile).toString()) : await this.readIndexFile();
     }
 
-    private saveIndexData(indexData: Record<string, Record<string, any>>): void {
+    protected saveIndexData(indexData: Record<string, Record<string, any>>): void {
         const dataFile = this.getBruteForceDataFile();
         fs.writeFileSync(dataFile, JSON.stringify(indexData, null, 2));
+    }
+
+    protected async extractRawDataByLocation(location: number): Promise<Buffer | null> {
+        // TODO: Figure out which dat file to use
+        const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat0`;
+        if (!fs.existsSync(datFile)) {
+            console.log(`"${datFile}" does not exist`);
+            return null;
+        }
+        const reader = createReader(datFile);
+        reader.seek(location);
+        return await this.readDataEntry(reader, location);
+    }
+
+    protected async extractRawData(file: string, indexData?: any): Promise<Buffer | null> {
+        indexData = indexData ?? (await this.readIndexFile());
+        const [pathHash, fileHash] = this.splitFullPath(file).map(hashCrc32);
+        const locationData = indexData[pathHash] && indexData[pathHash][fileHash];
+        if (locationData == null) {
+            console.log(`"${file}" is not found`);
+            return null;
+        }
+        const data = await this.extractRawDataByLocation(locationData[1]);
+        if (data == null) {
+            console.log(`Can not extract "${file}"`);
+            return null;
+        }
+        return data;
+    }
+
+    protected async *extractRawDataBatch(files: string[]) {
+        const indexData = await this.readIndexFile();
+        for (const file of files) {
+            const data = await this.extractRawData(file, indexData);
+            if (data == null) continue;
+            yield { file, data };
+        }
     }
 
     splitFullPath(fullPath: string): [string, string] {
@@ -199,17 +265,17 @@ export default abstract class Archive {
         return [paths.slice(0, -1).join('/'), paths[paths.length - 1]];
     }
 
-    async bruteForce(generator: Generator<string>) {
+    async bruteForce(generator: AsyncGenerator<string>) {
         let found = false;
         const outputFile = this.getBruteForceResultFile();
         const indexData = await this.loadIndexData();
-        for (const fullPath of generator) {
-            const [pathName, fileName] = this.splitFullPath(fullPath);
+        for await (const fullPath of generator) {
+            const [pathName, fileName] = this.splitFullPath(fullPath.toLowerCase());
             const pathCrc = hashCrc32(pathName);
             if (indexData[pathCrc]) {
                 const fileCrc = hashCrc32(fileName);
                 if (indexData[pathCrc][fileCrc]) {
-                    fs.appendFileSync(outputFile, fullPath + EOL);
+                    fs.appendFileSync(outputFile, fullPath.toLowerCase() + EOL);
                     delete indexData[pathCrc][fileCrc];
                     if (Object.keys(indexData[pathCrc]).length === 0) delete indexData[pathCrc];
                     found = true;
@@ -264,41 +330,14 @@ export default abstract class Archive {
         append('COMMIT;');
     }
 
-    async extractRaw(file?: string): Promise<void> {
-        const indexData = await this.readIndexFile();
-        const files =
-            typeof file === 'string'
-                ? [file]
-                : fs
-                      .readFileSync(this.getBruteForceResultFile())
-                      .toString()
-                      .split(EOL)
-                      .filter(line => line.trim() !== '');
-        for (const file of files) {
-            const [pathHash, fileHash] = this.splitFullPath(file).map(hashCrc32);
-            const location = indexData[pathHash] && indexData[pathHash][fileHash];
-            if (location == null) {
-                console.log(`"${file}" is not found`);
-                continue;
-            }
-            // TODO: Figure out which dat file to use
-            const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat0`;
-            if (!fs.existsSync(datFile)) {
-                console.log(`"${datFile}" does not exist`);
-                continue;
-            }
-            const reader = createReader(datFile);
-            reader.seek(location[1]);
-            const data = await this.readDataEntry(reader, location[1]);
-            if (data == null) {
-                console.log(`Can not extract "${datFile}"`);
-                continue;
-            }
-            const outputFile = path.normalize(path.join(extractDir, file));
-            const outputDir = path.dirname(outputFile);
-            if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-            fs.writeFileSync(outputFile, data);
-            console.log(outputFile);
-        }
+    async extractRawFile(file: string): Promise<void> {
+        const data = await this.extractRawData(file);
+        if (data == null) return;
+
+        const outputFile = path.normalize(path.join(extractDir, file));
+        const outputDir = path.dirname(outputFile);
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        fs.writeFileSync(outputFile, data);
+        console.log(outputFile);
     }
 }

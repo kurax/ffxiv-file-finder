@@ -1,8 +1,13 @@
+import dotenv from 'dotenv';
+
 import ArchiveUI from './ArchiveUI';
 
-const sqpackDir = 'D:\\Games\\最终幻想XIV\\game\\sqpack';
+dotenv.config();
+
+const sqpackDir = process.env.SQPACK_DIR;
 const archive = new ArchiveUI(sqpackDir);
 (async () => {
-    // archive.bruteForce(archive.bruteForce_LoadingImages());
-    await archive.extractRaw('ui/icon/000000/000000.tex');
+    // archive.bruteForce(archive.extractTexFromUld());
+    // await archive.extractRaw('ui/icon/000000/000000.tex');
+    // archive.generateSql();
 })();
