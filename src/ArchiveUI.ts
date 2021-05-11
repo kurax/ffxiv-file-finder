@@ -1,4 +1,3 @@
-import fs from 'fs';
 import path from 'path';
 
 import { createMemoryReader } from './reader';
@@ -10,20 +9,22 @@ export default class ArchiveUI extends Archive {
         super(path.join(sqpackDir, 'ffxiv\\060000.win32.index'));
     }
 
-    async *bruteForce_Icons() {
-        for (let i = 0; i <= 150000; i++) {
+    async *generateIcons() {
+        const directories = ['hq', 'chs', 'en', 'ja'];
+        for (let i = 0; i <= 200000; i++) {
             const filePart = i.toString().padStart(6, '0');
             const pathPart = filePart.substr(0, 3).padEnd(6, '0');
-            for (const hq of ['', '/hq']) yield `ui/icon/${pathPart}${hq}/${filePart}.tex`;
+            yield `ui/icon/${pathPart}/${filePart}.tex`;
+            for (const dir of directories) yield `ui/icon/${pathPart}/${dir}/${filePart}.tex`;
         }
     }
 
-    async *bruteForce_LoadingImages() {
+    async *generateLoadingImages() {
         for (let i = 0; i <= 99; i++)
             yield `ui/loadingimage/-nowloading_base${i === 0 ? '' : i.toString().padStart(2, '0')}.tex`;
     }
 
-    async *bruteForce_Maps() {
+    async *generateMaps() {
         for (const word of ['default', 'region', 'world']) {
             for (let i = 0; i <= 99; i++) {
                 const num = i.toString().padStart(2, '0');
@@ -52,7 +53,7 @@ export default class ArchiveUI extends Archive {
         }
     }
 
-    async *extractTexFromUld() {
+    async *generateTexFromUld() {
         const uldPath = 'ui/uld';
         const data = (await this.loadIndexData())[hashCrc32(uldPath)];
         if (data == null) return;

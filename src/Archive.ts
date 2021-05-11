@@ -4,7 +4,7 @@ import path from 'path';
 import { inflateRawSync } from 'zlib';
 
 import { createReader, Reader } from './reader';
-import { hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
+import { bruteForceLevel1, bruteForceLevel2, hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
 
 const dataDir = path.join(__dirname, '..', 'data');
 const extractDir = path.join(__dirname, '..', 'extract');
@@ -20,11 +20,7 @@ export default abstract class Archive {
         this.indexType = basename.split('.')[0];
     }
 
-    protected getBruteForceDataFile() {
-        return this.baseFileName + '.json';
-    }
-
-    protected getBruteForceResultFile() {
+    protected getFileNameResultFile() {
         return this.baseFileName + '.txt';
     }
 
@@ -212,14 +208,32 @@ export default abstract class Archive {
         }
     }
 
-    protected async loadIndexData(): Promise<Record<string, Record<string, any>>> {
-        const dataFile = this.getBruteForceDataFile();
-        return fs.existsSync(dataFile) ? JSON.parse(fs.readFileSync(dataFile).toString()) : await this.readIndexFile();
+    protected findInIndexData(
+        indexData: Record<string, Record<string, any>>,
+        fullPath: string,
+        remove = true
+    ): boolean {
+        const [pathName, fileName] = this.splitFullPath(fullPath.toLowerCase());
+        const pathCrc = hashCrc32(pathName);
+        if (indexData[pathCrc]) {
+            const fileCrc = hashCrc32(fileName);
+            if (indexData[pathCrc][fileCrc]) {
+                if (remove === true) {
+                    delete indexData[pathCrc][fileCrc];
+                    if (Object.keys(indexData[pathCrc]).length === 0) delete indexData[pathCrc];
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
-    protected saveIndexData(indexData: Record<string, Record<string, any>>): void {
-        const dataFile = this.getBruteForceDataFile();
-        fs.writeFileSync(dataFile, JSON.stringify(indexData, null, 2));
+    protected async loadIndexData(): Promise<Record<string, Record<string, any>>> {
+        const indexData = await this.readIndexFile();
+        const resultFile = this.getFileNameResultFile();
+        for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL))
+            if (this.findInIndexData(indexData, fullPath) === false) console.log('Missing: ' + fullPath);
+        return indexData;
     }
 
     protected async extractRawDataByLocation(location: number): Promise<Buffer | null> {
@@ -265,39 +279,47 @@ export default abstract class Archive {
         return [paths.slice(0, -1).join('/'), paths[paths.length - 1]];
     }
 
-    async bruteForce(generator: AsyncGenerator<string>) {
+    async findByGenerator(generator: AsyncGenerator<string>) {
         let found = false;
-        const outputFile = this.getBruteForceResultFile();
+        const resultFile = this.getFileNameResultFile();
         const indexData = await this.loadIndexData();
-        for await (const fullPath of generator) {
-            const [pathName, fileName] = this.splitFullPath(fullPath.toLowerCase());
-            const pathCrc = hashCrc32(pathName);
-            if (indexData[pathCrc]) {
-                const fileCrc = hashCrc32(fileName);
-                if (indexData[pathCrc][fileCrc]) {
-                    fs.appendFileSync(outputFile, fullPath.toLowerCase() + EOL);
-                    delete indexData[pathCrc][fileCrc];
-                    if (Object.keys(indexData[pathCrc]).length === 0) delete indexData[pathCrc];
-                    found = true;
-                    console.log(fullPath);
-                }
+        for await (const fullPath of generator)
+            if (this.findInIndexData(indexData, fullPath)) {
+                fs.appendFileSync(resultFile, fullPath.toLowerCase() + EOL);
+                found = true;
+                console.log(fullPath);
+            }
+
+        if (found) this.sortResult();
+        else console.log('Nothing found =(');
+    }
+
+    async bruteForce(prefix: string, ext?: string, length = 10) {
+        let found = false;
+        const resultFile = this.getFileNameResultFile();
+        const indexData = await this.loadIndexData();
+        for (const name of bruteForceLevel2(length)) {
+            const fullPath = `${prefix}${name}${ext ?? ''}`.toLowerCase();
+            if (this.findInIndexData(indexData, fullPath, false)) {
+                fs.appendFileSync(resultFile, fullPath + EOL);
+                found = true;
+                console.log(fullPath);
             }
         }
 
-        if (!found) {
-            console.log('Nothing found =(');
-            return;
-        }
+        if (found) this.sortResult();
+        else console.log('Nothing found =(');
+    }
 
-        if (fs.existsSync(outputFile))
+    sortResult(): void {
+        const resultFile = this.getFileNameResultFile();
+        if (fs.existsSync(resultFile))
             fs.writeFileSync(
-                outputFile,
-                Array.from(new Set(fs.readFileSync(outputFile).toString().split(EOL)))
-                    .filter(line => line.trim() !== '')
+                resultFile,
+                Array.from(new Set(fs.readFileSync(resultFile).toString().trim().split(EOL)))
                     .sort()
                     .join(EOL) + EOL
             );
-        this.saveIndexData(indexData);
     }
 
     generateSql(): void {
@@ -307,7 +329,7 @@ export default abstract class Archive {
             ['folders', 'path', new Set<string>()],
             ['filenames', 'name', new Set<string>()]
         ];
-        for (const fullPath of fs.readFileSync(this.getBruteForceResultFile()).toString().split(EOL)) {
+        for (const fullPath of fs.readFileSync(this.getFileNameResultFile()).toString().split(EOL)) {
             if (fullPath.trim() === '') continue;
             const [pathName, fileName] = this.splitFullPath(fullPath);
             types[0][2].add(pathName);

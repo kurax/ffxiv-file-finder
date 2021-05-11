@@ -7,6 +7,7 @@ dotenv.config();
 const sqpackDir = process.env.SQPACK_DIR;
 const archive = new ArchiveUI(sqpackDir);
 (async () => {
-    await archive.bruteForce(archive.extractTexFromUld());
-    archive.generateSql();
+    // await archive.findByGenerator(archive.generateIcons());
+    // await archive.bruteForce('ui/common/creditstaffinfo', '.ugd', 5);
+    // archive.generateSql();
 })();
