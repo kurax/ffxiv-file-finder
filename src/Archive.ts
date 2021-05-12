@@ -1,23 +1,27 @@
 import fs from 'fs';
 import { EOL } from 'os';
 import path from 'path';
+import { open } from 'sqlite';
+import sqlite3 from 'sqlite3';
 import { inflateRawSync } from 'zlib';
 
 import { createReader, Reader } from './reader';
-import { bruteForceLevel1, bruteForceLevel2, hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
+import { bruteForceLevel2, hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
 
 const dataDir = path.join(__dirname, '..', 'data');
 const extractDir = path.join(__dirname, '..', 'extract');
 
 export default abstract class Archive {
     private readonly baseFileName: string;
-    private readonly indexType: string;
+    private indexType: string | number;
 
     protected constructor(readonly indexFile: string) {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
         const basename = path.basename(this.indexFile);
         this.baseFileName = path.join(dataDir, basename);
         this.indexType = basename.split('.')[0];
+        const indexType: string | number = Number(this.indexType);
+        if (!isNaN(indexType)) this.indexType = indexType;
     }
 
     protected getFileNameResultFile() {
@@ -26,6 +30,10 @@ export default abstract class Archive {
 
     protected getSqlFile() {
         return this.baseFileName + '.sql';
+    }
+
+    protected getDbFile() {
+        return path.join(dataDir, 'hashlist.db');
     }
 
     protected async readIndexFile() {
@@ -329,20 +337,20 @@ export default abstract class Archive {
             ['folders', 'path', new Set<string>()],
             ['filenames', 'name', new Set<string>()]
         ];
-        for (const fullPath of fs.readFileSync(this.getFileNameResultFile()).toString().split(EOL)) {
+        for (const fullPath of fs.readFileSync(this.getFileNameResultFile()).toString().trim().split(EOL)) {
             if (fullPath.trim() === '') continue;
             const [pathName, fileName] = this.splitFullPath(fullPath);
             types[0][2].add(pathName);
             types[1][2].add(fileName);
         }
+
+        const indexType = typeof this.indexType === 'number' ? this.indexType : `"${this.indexType}"`;
         if (fs.existsSync(outputFile)) fs.truncateSync(outputFile);
         append('BEGIN TRANSACTION;');
         for (const type of types) {
             append(`INSERT INTO "${type[0]}" ("hash", "${type[1]}", "used", "archive", "version") VALUES`);
             let counter = 0;
             for (const name of type[2]) {
-                let indexType: string | number = Number(this.indexType);
-                indexType = isNaN(indexType) ? `"${this.indexType}"` : indexType;
                 append(
                     `(${hashCrc32Signed(name)}, "${name}", 0, ${indexType}, 8)${++counter === type[2].size ? ';' : ','}`
                 );
@@ -350,6 +358,62 @@ export default abstract class Archive {
             }
         }
         append('COMMIT;');
+    }
+
+    async writeToDatabase(overwritePath = false, overwriteFile = false): Promise<void> {
+        const db = await open({
+            filename: this.getDbFile(),
+            driver: sqlite3.cached.Database
+        });
+        try {
+            const foldersData = new Set<string>();
+            const filenamesData = new Set<string>();
+            const indexType = typeof this.indexType === 'number' ? this.indexType : `"${this.indexType}"`;
+            for (const fullPath of fs.readFileSync(this.getFileNameResultFile()).toString().trim().split(EOL)) {
+                if (fullPath.trim() === '') continue;
+                const [pathName, fileName] = this.splitFullPath(fullPath);
+                foldersData.add(pathName);
+                filenamesData.add(fileName);
+            }
+            for (const folderName of foldersData) {
+                const hash = hashCrc32Signed(folderName);
+                const item = await db.get(`SELECT * FROM folders WHERE hash = ?`, hash);
+                if (item == null) {
+                    await db.exec(`INSERT INTO folders VALUES (${hash},"${folderName}",0,${indexType},8)`);
+                    console.log(folderName);
+                    continue;
+                }
+                if (item.path !== folderName) {
+                    if (overwritePath)
+                        await db.get(`UPDATE folders SET path = :path, archive = :archive WHERE hash = :hash`, {
+                            ':path': folderName,
+                            ':archive': this.indexType,
+                            ':hash': hash
+                        });
+                    console.log(`Hash conflict: ${hash}, Exist: ${item.path}, New: ${folderName}`);
+                }
+            }
+            for (const fileName of filenamesData) {
+                const hash = hashCrc32Signed(fileName);
+                const item = await db.get(`SELECT * FROM filenames WHERE hash = ?`, hash);
+                if (item == null) {
+                    await db.exec(`INSERT INTO filenames VALUES (${hash},"${fileName}",0,${indexType},8)`);
+                    console.log(fileName);
+                    continue;
+                }
+                if (item.name !== fileName) {
+                    if (overwriteFile)
+                        await db.get(`UPDATE filenames SET name = :name, archive = :archive WHERE hash = :hash`, {
+                            ':name': fileName,
+                            ':archive': this.indexType,
+                            ':hash': hash
+                        });
+                    console.log(`Hash conflict: ${hash}, Exist: ${item.name}, New: ${fileName}`);
+                }
+            }
+        } finally {
+            await db.close();
+        }
     }
 
     async extractRawFile(file: string): Promise<void> {
