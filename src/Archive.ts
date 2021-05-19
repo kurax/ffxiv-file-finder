@@ -245,8 +245,7 @@ export default abstract class Archive {
     }
 
     protected async extractRawDataByLocation(location: number): Promise<Buffer | null> {
-        // TODO: Figure out which dat file to use
-        const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat0`;
+        const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat${((location / 8) & 15) / 2}`;
         if (!fs.existsSync(datFile)) {
             console.log(`"${datFile}" does not exist`);
             return null;
