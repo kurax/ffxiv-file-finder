@@ -237,8 +237,9 @@ export default abstract class Archive {
     protected async loadIndexData(): Promise<IndexDataType> {
         const indexData = await this.readIndexFile();
         const resultFile = this.getFileNameResultFile();
-        for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL))
-            if (this.findInIndexData(indexData, fullPath) === false) console.log('Missing: ' + fullPath);
+        if (fs.existsSync(resultFile))
+            for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL))
+                if (this.findInIndexData(indexData, fullPath) === false) console.log('Missing: ' + fullPath);
         return indexData;
     }
 
@@ -336,7 +337,14 @@ export default abstract class Archive {
             ['folders', 'path', new Set<string>()],
             ['filenames', 'name', new Set<string>()]
         ];
-        for (const fullPath of fs.readFileSync(this.getFileNameResultFile()).toString().trim().split(EOL)) {
+
+        const resultFile = this.getFileNameResultFile();
+        if (!fs.existsSync(resultFile)) {
+            console.log('No result file.');
+            return;
+        }
+
+        for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL)) {
             if (fullPath.trim() === '') continue;
             const [pathName, fileName] = this.splitFullPath(fullPath);
             types[0][2].add(pathName);

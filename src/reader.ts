@@ -5,6 +5,7 @@ export interface Reader {
     current: () => number;
     read: (size: number) => Promise<Buffer>;
     seek: (position: number) => Promise<void>;
+    seekRelative: (position: number) => Promise<void>;
     readInt: () => Promise<number>;
     readInt16: () => Promise<number>;
     readInt32: () => Promise<number>;
@@ -28,6 +29,9 @@ export function createReader(file: string): Reader {
         ),
         seek: promisify((position: number, callback: (err: Error | null) => void) =>
             reader.seek(position, () => callback(null))
+        ),
+        seekRelative: promisify((position: number, callback: (err: Error | null) => void) =>
+            reader.seek(position, { current: true }, () => callback(null))
         ),
         readSha1: promisify((callback: (err: Error, sha1: string) => void) =>
             reader.read(20, (_: number, buffer: Buffer) => callback(null, buffer.toString('hex')))
@@ -65,6 +69,10 @@ export function createMemoryReader(buffer: Buffer): Reader {
 
         async seek(position: number) {
             this.offset = position;
+        }
+
+        async seekRelative(position: number) {
+            this.offset += position;
         }
 
         async readSha1() {
