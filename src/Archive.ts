@@ -8,6 +8,8 @@ import { inflateRawSync } from 'zlib';
 import { createReader, Reader } from './reader';
 import { bruteForceLevel2, hashCrc32, hashCrc32Signed, hashSha1 } from './utils';
 
+type IndexDataType = Record<string, Record<string, number>>;
+
 const dataDir = path.join(__dirname, '..', 'data');
 const extractDir = path.join(__dirname, '..', 'extract');
 
@@ -36,7 +38,7 @@ export default abstract class Archive {
         return path.join(dataDir, 'hashlist.db');
     }
 
-    protected async readIndexFile() {
+    protected async readIndexFile(): Promise<IndexDataType> {
         const reader = createReader(this.indexFile);
         // SqPack header
         // Signature
@@ -66,7 +68,7 @@ export default abstract class Archive {
         // Segment header
         const segmentHeaderLength = await reader.readInt32();
         // Segments
-        const segments = [];
+        const segments: Array<[number, number, number]> = [];
         for (let segmentNo = 1; segmentNo <= 4; segmentNo++) {
             const index = await reader.readInt32();
             const offset = await reader.readInt32();
@@ -99,10 +101,10 @@ export default abstract class Archive {
         //     console.log(folderNameHash, filesOffset, fileSize, fileCount);
         // }
 
-        const result = {};
+        const result: IndexDataType = {};
 
         let segment = segments[0];
-        let [index, offset, size] = segment;
+        let [, offset, size] = segment;
         await reader.seek(offset);
         while (reader.current() < offset + size) {
             // const pos = reader.current();
@@ -111,7 +113,7 @@ export default abstract class Archive {
             const dataOffset = (await reader.readInt32()) * 0x8;
             await reader.read(4);
             result[filePathHash] = result[filePathHash] ?? {};
-            result[filePathHash][fileNameHash] = result[filePathHash][fileNameHash] ?? [index, dataOffset];
+            result[filePathHash][fileNameHash] = result[filePathHash][fileNameHash] ?? dataOffset;
             // console.log(pos, fileNameHash, filePathHash, dataOffset);
         }
 
@@ -216,11 +218,7 @@ export default abstract class Archive {
         }
     }
 
-    protected findInIndexData(
-        indexData: Record<string, Record<string, any>>,
-        fullPath: string,
-        remove = true
-    ): boolean {
+    protected findInIndexData(indexData: IndexDataType, fullPath: string, remove = true): boolean {
         const [pathName, fileName] = this.splitFullPath(fullPath.toLowerCase());
         const pathCrc = hashCrc32(pathName);
         if (indexData[pathCrc]) {
@@ -236,7 +234,7 @@ export default abstract class Archive {
         return false;
     }
 
-    protected async loadIndexData(): Promise<Record<string, Record<string, any>>> {
+    protected async loadIndexData(): Promise<IndexDataType> {
         const indexData = await this.readIndexFile();
         const resultFile = this.getFileNameResultFile();
         for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL))
@@ -245,7 +243,9 @@ export default abstract class Archive {
     }
 
     protected async extractRawDataByLocation(location: number): Promise<Buffer | null> {
-        const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat${((location / 8) & 15) / 2}`;
+        const datFile = `${this.indexFile.substr(0, this.indexFile.lastIndexOf('.'))}.dat${
+            ((location / 0x8) & 0xf) / 2
+        }`;
         if (!fs.existsSync(datFile)) {
             console.log(`"${datFile}" does not exist`);
             return null;
@@ -255,15 +255,15 @@ export default abstract class Archive {
         return await this.readDataEntry(reader, location);
     }
 
-    protected async extractRawData(file: string, indexData?: any): Promise<Buffer | null> {
+    protected async extractRawData(file: string, indexData?: IndexDataType): Promise<Buffer | null> {
         indexData = indexData ?? (await this.readIndexFile());
         const [pathHash, fileHash] = this.splitFullPath(file).map(hashCrc32);
-        const locationData = indexData[pathHash] && indexData[pathHash][fileHash];
-        if (locationData == null) {
+        const location = indexData[pathHash] && indexData[pathHash][fileHash];
+        if (location == null) {
             console.log(`"${file}" is not found`);
             return null;
         }
-        const data = await this.extractRawDataByLocation(locationData[1]);
+        const data = await this.extractRawDataByLocation(location);
         if (data == null) {
             console.log(`Can not extract "${file}"`);
             return null;
