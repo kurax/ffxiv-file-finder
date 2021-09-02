@@ -15,6 +15,7 @@ export default class ArchiveUI extends Archive {
             const filePart = i.toString().padStart(6, '0');
             const pathPart = filePart.substr(0, 3).padEnd(6, '0');
             yield `ui/icon/${pathPart}/${filePart}.tex`;
+            yield `ui/icon/${pathPart}/${filePart}_hr1.tex`;
             for (const dir of directories) yield `ui/icon/${pathPart}/${dir}/${filePart}.tex`;
         }
     }
@@ -25,16 +26,18 @@ export default class ArchiveUI extends Archive {
     }
 
     async *generateMaps() {
-        for (const word of ['default', 'region', 'world']) {
+        for (const word of ['default', 'region', 'world'])
             for (let i = 0; i <= 99; i++) {
                 const num = i.toString().padStart(2, '0');
                 for (const size of ['m', 's']) yield `ui/map/${word}/${num}/${word}${num}_${size}.tex`;
             }
-        }
-        for (let first = 97; first <= 122; first++) {
+
+        for (let first = 48; first <= 122; first++) {
+            if (first >= 58 && first <= 96) continue;
             for (let second = 48; second <= 122; second++) {
                 if (second >= 58 && second <= 96) continue;
-                for (let third = 97; third <= 122; third++) {
+                for (let third = 48; third <= 122; third++) {
+                    if (third >= 58 && third <= 96) continue;
                     for (let fourth = 48; fourth <= 122; fourth++) {
                         if (fourth >= 58 && fourth <= 96) continue;
                         const name =

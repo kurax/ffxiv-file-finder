@@ -238,8 +238,16 @@ export default abstract class Archive {
         const indexData = await this.readIndexFile();
         const resultFile = this.getFileNameResultFile();
         if (fs.existsSync(resultFile))
-            for (const fullPath of fs.readFileSync(resultFile).toString().trim().split(EOL))
-                if (this.findInIndexData(indexData, fullPath) === false) console.log('Missing: ' + fullPath);
+            fs.writeFileSync(
+                resultFile,
+                fs
+                    .readFileSync(resultFile)
+                    .toString()
+                    .trim()
+                    .split(EOL)
+                    .filter(fullPath => this.findInIndexData(indexData, fullPath))
+                    .join(EOL)
+            );
         return indexData;
     }
 
