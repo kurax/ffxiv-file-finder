@@ -21,8 +21,10 @@ export default class ArchiveUI extends Archive {
     }
 
     async *generateLoadingImages() {
-        for (let i = 0; i <= 99; i++)
+        for (let i = 0; i <= 99; i++) {
             yield `ui/loadingimage/-nowloading_base${i === 0 ? '' : i.toString().padStart(2, '0')}.tex`;
+            yield `ui/loadingimage/-nowloading_base${i === 0 ? '' : i.toString().padStart(2, '0')}_hr1.tex`;
+        }
     }
 
     async *generateMaps() {
